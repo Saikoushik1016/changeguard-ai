@@ -15,11 +15,12 @@ async def github_webhook(
 ) -> dict:
     raw_body = await request.body()
 
-    verify_github_signature(
-        payload_body=raw_body,
-        secret_token=settings.github_webhook_secret,
-        signature_header=x_hub_signature_256,
-    )
+    if x_github_event not in settings.github_allowed_events:
+        return {
+            "accepted": False,
+            "event": x_github_event,
+            "message": f"Event '{x_github_event}' not processed",
+        }
 
     return {
         "accepted": True,
