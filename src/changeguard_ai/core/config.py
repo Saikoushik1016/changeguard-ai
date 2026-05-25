@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     github_webhook_secret: str = Field(default="replace-me", alias="GITHUB_WEBHOOK_SECRET")
+    github_token: str = Field(default="", alias="GITHUB_TOKEN")
     github_allowed_events_raw: str = Field(
         default="pull_request,push,pull_request_review",
         alias="GITHUB_ALLOWED_EVENTS",
