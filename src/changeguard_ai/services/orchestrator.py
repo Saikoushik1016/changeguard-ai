@@ -67,41 +67,70 @@ Respond with ONLY the JSON object. No explanation. No markdown.
 """
 
 
-def get_mock_response(signals: dict) -> dict:
-    severities = [
-        signals['iac']['severity'],
-        signals['blast']['estimated_user_impact'],
-        signals['ownership']['severity'],
-        signals['history']['severity'],
-    ]
+def build_risk_decision(pr: PRMetadata, signals: dict) -> dict:
+    severity_scores = {
+        "low": 0,
+        "medium": 1,
+        "high": 2,
+        "critical": 3,
+    }
 
-    if "critical" in severities:
-        score = 85
+    diff_signals = signals.get("diff", {})
+    iac_signals = signals.get("iac", {})
+    blast_signals = signals.get("blast", {})
+    ownership_signals = signals.get("ownership", {})
+    history_signals = signals.get("history", {})
+
+    score = 10
+    score += int(diff_signals.get("churn_score", 0) * 20)
+    score += 10 if diff_signals.get("has_migration", False) else 0
+    score += 8 if diff_signals.get("test_ratio", 1.0) < 0.1 else 0
+    score += 12 if iac_signals.get("has_secret_changes", False) else 0
+    score += 10 if iac_signals.get("has_permission_changes", False) else 0
+    score += 8 if blast_signals.get("touches_shared_code", False) else 0
+    score += 10 if blast_signals.get("touches_critical_path", False) else 0
+    score += 8 if blast_signals.get("touches_dependencies", False) else 0
+    score += 10 if ownership_signals.get("is_cross_team", False) else 0
+    score += 12 if ownership_signals.get("has_tier1_service", False) else 0
+    score += 12 if history_signals.get("risky_branch_name", False) else 0
+    score += 10 if history_signals.get("has_hotfix_patterns", False) else 0
+    score += 10 if history_signals.get("has_rollback_patterns", False) else 0
+
+    max_severity = max(
+        [
+            iac_signals.get("severity", "low"),
+            blast_signals.get("estimated_user_impact", "low"),
+            ownership_signals.get("severity", "low"),
+            history_signals.get("severity", "low"),
+        ],
+        key=lambda level: severity_scores[level],
+    )
+
+    if max_severity == "critical" or score >= 75:
         level = "critical"
         rollout = "do not deploy — requires senior review first"
         human_review = True
-    elif "high" in severities:
-        score = 65
+    elif max_severity == "high" or score >= 55:
         level = "high"
         rollout = "canary deploy at 5% with monitoring"
         human_review = True
-    elif "medium" in severities:
-        score = 40
+    elif max_severity == "medium" or score >= 30:
         level = "medium"
         rollout = "standard deploy with extra monitoring"
         human_review = False
     else:
-        score = 15
         level = "low"
         rollout = "standard deploy"
         human_review = False
 
+    score = max(0, min(100, score))
+
     all_signals = (
-        signals['diff']['risk_signals'] +
-        signals['iac']['risk_signals'] +
-        signals['blast']['risk_signals'] +
-        signals['ownership']['risk_signals'] +
-        signals['history']['risk_signals']
+        diff_signals.get("risk_signals", []) +
+        iac_signals.get("risk_signals", []) +
+        blast_signals.get("risk_signals", []) +
+        ownership_signals.get("risk_signals", []) +
+        history_signals.get("risk_signals", [])
     )
 
     top_factors = all_signals[:3] if all_signals else ["No significant risk factors detected"]
@@ -114,6 +143,21 @@ def get_mock_response(signals: dict) -> dict:
         "recommended_rollout": rollout,
         "requires_human_review": human_review,
     }
+
+
+def get_mock_response(signals: dict) -> dict:
+    return build_risk_decision(PRMetadata(
+        pr_number=0,
+        title="",
+        author="",
+        base_branch="",
+        head_branch="",
+        repo_full_name="",
+        additions=0,
+        deletions=0,
+        pr_url="",
+        files_changed=[],
+    ), signals)
 
 
 def call_claude(prompt: str) -> dict:
@@ -148,7 +192,7 @@ def run_orchestrator(pr: PRMetadata) -> RiskReport:
         result = None
 
     if result is None:
-        result = get_mock_response(signals)
+        result = build_risk_decision(pr, signals)
 
     return RiskReport(
         pr_number=pr.pr_number,
