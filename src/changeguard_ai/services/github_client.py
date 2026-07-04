@@ -1,6 +1,10 @@
+import logging
+
 import httpx
 from changeguard_ai.core.config import settings
 from changeguard_ai.models import RiskReport
+
+logger = logging.getLogger(__name__)
 
 
 GITHUB_API_BASE = "https://api.github.com"
@@ -11,6 +15,7 @@ def get_headers() -> dict:
         "Authorization": f"Bearer {settings.github_token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "changeguard-ai",
     }
 
 
@@ -77,4 +82,22 @@ async def post_pr_comment(repo: str, pr_number: int, report: RiskReport) -> bool
             json={"body": comment_body},
         )
 
-        return response.status_code == 201
+        if response.status_code == 201:
+            return True
+
+        try:
+            payload = response.json()
+            message = payload.get("message", "Unknown error") if isinstance(payload, dict) else str(payload)
+        except (AttributeError, ValueError, TypeError):
+            message = getattr(response, "text", "") or "Unknown error"
+
+        logger.warning(
+            "GitHub API rejected comment request",
+            extra={
+                "repo": repo,
+                "pr_number": pr_number,
+                "status_code": response.status_code,
+                "error_message": message,
+            },
+        )
+        return False
