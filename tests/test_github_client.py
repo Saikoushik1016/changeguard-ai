@@ -52,4 +52,18 @@ def test_post_pr_comment_returns_false_on_forbidden(monkeypatch, caplog):
     result = asyncio.run(github_client.post_pr_comment("octo/repo", 7, make_report()))
 
     assert result is False
-    assert "GitHub API rejected comment request" in caplog.text
+    assert "Check GITHUB_TOKEN" in caplog.text
+
+
+def test_post_pr_comment_logs_unauthorized_header(monkeypatch, caplog):
+    class UnauthorizedClient(DummyAsyncClient):
+        async def post(self, *args, **kwargs):
+            return DummyResponse(401, '{"message":"Bad credentials"}')
+
+    monkeypatch.setattr(github_client.httpx, "AsyncClient", lambda *args, **kwargs: UnauthorizedClient(None))
+    monkeypatch.setattr(github_client.settings, "github_token", "fake-token")
+
+    result = asyncio.run(github_client.post_pr_comment("octo/repo", 7, make_report()))
+
+    assert result is False
+    assert "Bad credentials" in caplog.text

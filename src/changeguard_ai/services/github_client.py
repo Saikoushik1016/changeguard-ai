@@ -10,6 +10,39 @@ logger = logging.getLogger(__name__)
 GITHUB_API_BASE = "https://api.github.com"
 
 
+def _describe_response_error(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+        if isinstance(payload, dict):
+            message = payload.get("message", "Unknown error")
+            if isinstance(message, str):
+                return message
+        return str(payload)
+    except (AttributeError, ValueError, TypeError):
+        return getattr(response, "text", "") or "Unknown error"
+
+
+def _log_github_error(action: str, repo: str, pr_number: int, response: httpx.Response) -> None:
+    message = _describe_response_error(response)
+    if response.status_code in {401, 403}:
+        logger.warning(
+            "GitHub authentication failed while %s for %s #%s: %s. Check GITHUB_TOKEN and ensure it has repo/issue comment permissions.",
+            action,
+            repo,
+            pr_number,
+            message,
+        )
+    else:
+        logger.warning(
+            "GitHub API rejected %s for %s #%s with status %s: %s",
+            action,
+            repo,
+            pr_number,
+            response.status_code,
+            message,
+        )
+
+
 def get_headers() -> dict:
     return {
         "Authorization": f"Bearer {settings.github_token}",
@@ -29,6 +62,7 @@ async def fetch_pr_files(repo: str, pr_number: int) -> list[str]:
         response = await client.get(url, headers=get_headers())
 
         if response.status_code != 200:
+            _log_github_error("fetching PR files", repo, pr_number, response)
             return []
 
         files_data = response.json()
@@ -85,19 +119,5 @@ async def post_pr_comment(repo: str, pr_number: int, report: RiskReport) -> bool
         if response.status_code == 201:
             return True
 
-        try:
-            payload = response.json()
-            message = payload.get("message", "Unknown error") if isinstance(payload, dict) else str(payload)
-        except (AttributeError, ValueError, TypeError):
-            message = getattr(response, "text", "") or "Unknown error"
-
-        logger.warning(
-            "GitHub API rejected comment request",
-            extra={
-                "repo": repo,
-                "pr_number": pr_number,
-                "status_code": response.status_code,
-                "error_message": message,
-            },
-        )
+        _log_github_error("posting a PR comment", repo, pr_number, response)
         return False
